@@ -1,0 +1,6 @@
+name: MaxAntiCheat
+version: '${project.version}'
+main: me.maxmods.maxanticheat.MaxAntiCheat
+api-version: 1.17
+authors: [ MaxMods ]
+description: AntiCheat and AntiExploits
