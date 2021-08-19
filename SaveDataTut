@@ -1,0 +1,272 @@
+In this tutorial we will cover the basics of saving and loading your own custom data files.
+We will cover how to create Classes that can be serialized, how to "deflate" the data to save on file space, and how to inflate the data while simultaneously loading it back from the hard disk to speed up load times.
+
+First we will start with a container class. This class will be a template to hold all of the data we wish to serialize (save) and deserialize (load).
+All primitive data types, such as Integers, Strings, and Bytes can be serialized without any added code. Most bukkit/Spigot classes can be serialized as well, but not all directly.
+To ensure that our Classes can be serialized they will need to implement the "Serializable" interface. We will call our container class Data and implement this now.
+Code (Java):
+import java.io.Serializable;
+
+public class Data implements Serializable {
+ 
+}
+Now to compile without warnings we will have to add a Serial version ID.
+Most IDEs should have a suggestion or quick fix on how to achieve this. If so, click "Add generated serial version ID" and it will generate a serial version for us, if not use the one from this tutorial.
+
+Next lets talk about the transient variable modifier. It can be used to specify fields within classes that are not essential, or should not be serialized when we go to do so.
+For example, you store the "current" location of a player in one of your classes. If that location is serialized, saved, then loaded back later, it will most likely no longer be "current" and will need to be recalculated. This is when you would mark the variable as transient to keep the serialization as logical and efficient as possible, no need to save something that has no purpose to us when it is loaded back.
+Another example is this serial version ID we just created. It is static and our program will already be aware of it if we do not load it back, so we should mark this field as transient.
+
+Our class should now look like this:
+Code (Java):
+import java.io.Serializable;
+
+public class Data implements Serializable {
+    private static transient final long serialVersionUID = -1681012206529286330L;
+ 
+}
+Next we will add a function to save this data to a file. The data will be blank for now, but that is O.K..
+To do this we will need a few things.
+Code (Java):
+public boolean saveData(String filePath) {
+        try {
+            FileOutputStream fileOut = new FileOutputStream(filePath);
+            GZIPOutputStream gzOut = new GZIPOutputStream(fileOut);
+            BukkitObjectOutputStream out = new BukkitObjectOutputStream(gzOut);
+            return true;
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            return false;
+        }
+    }
+We now have the shell of a method that will take in a file path parameter and return true when the data is saved successfully or false if not.
+The BukkitObjectOutputStream is where the magic happens for us. It will take any serializable object that bukkit/Spigot can use and convert it to a savable (serializable) format. It's constructor requires an implementation of an output stream. We could simply provide it with the FileOutputStream, but we would like to compress (deflate) our data to shrink it down in size. The GZIPOutputStream does that for us, so we pass the FileOutputStream to the GZIPOutputStream 's constructor, then the GZIPOutputStream to the BukkitObjectOutputStream 's constructor and we have a ready to go BukkitObjectOutputStream.
+
+Now that you understand how all that works, we will condense it down into a one liner and attempt to write the data to a file, and close the stream:
+Code (Java):
+public boolean saveData(String filePath) {
+        try {
+            BukkitObjectOutputStream out = new BukkitObjectOutputStream(new GZIPOutputStream(new FileOutputStream(filePath)));
+            out.writeObject(this);
+            out.close();
+            return true;
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            return false;
+        }
+    }
+Time to add in a loadData method, this works the exact same way as our saveData method, just with input streams rather than output streams:
+Code (Java):
+public boolean loadData(String filePath) {
+        try {
+            BukkitObjectInputStream in = new BukkitObjectInputStream(new GZIPInputStream(new FileInputStream(filePath)));
+            Data data = (Data) in.readObject();
+            in.close();
+            return true;
+        } catch (ClassNotFoundException | IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            return false;
+        }
+    }
+Excellent, now we can save and load data to and from files, however the data is still blank, and the file currently comes back to us a temporary value.
+Now we will need to decide what kind of data we wish to add to the container. This will most likely be separate data that you already have in memory, and we will have to modify the save and load methods to handle this.
+
+Let us say that you have a Collection of Blocks that you wish to save. Unfortunately one can not simply serialize a Block, but it can be done indirectly.
+Blocks are made up of components that can be serialized. The Block's Location can be serialized as well as it's BlockData because the block data itself can be serialized as a String. We can then map the BlockData to a Location using a HashMap<Location, String> and we can store what the block data at each location should be. You can also serialize Player's indirectly using their UUID.
+Lets say we want to do this, save a bunch of BlockData for specific locations, and all the players that were online when the file last saved.
+We will add both of these elements to the container Data class, and add in a constructor to use when saving data, and one to use while loading data:
+Code (Java):
+    public final HashMap<Location, String> blockSnapShot;
+    public final HashSet<UUID> previouslyOnlinePlayers;
+ 
+    // Can be used for saving
+    public Data(HashMap<Location, String> blockSnapShot, HashSet<UUID> previouslyOnlinePlayers) {
+        this.blockSnapShot = blockSnapShot;
+        this.previouslyOnlinePlayers = previouslyOnlinePlayers;
+    }
+    // Can be used for loading
+    public Data(Data loadedData) {
+        this.blockSnapShot = loadedData.blockSnapShot;
+        this.previouslyOnlinePlayers = loadedData.previouslyOnlinePlayers;
+    }
+Next we will modify the the loadData method to become a static method and return a Data object when loaded, or null if the load has failed:
+Code (Text):
+public static Data loadData(String filePath) {
+        try {
+            BukkitObjectInputStream in = new BukkitObjectInputStream(new GZIPInputStream(new FileInputStream(filePath)));
+            Data data = (Data) in.readObject();
+            in.close();
+            return data;
+        } catch (ClassNotFoundException | IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            return null;
+        }
+    }
+Notice how we must cast the in.readObject() to (Data). This is important, what we read in (the file) must be the same type of object as what we are trying to assign to in memory. If you mix and match data types an exception will be thrown.
+
+And finally we will put it all together, we will create some methods that will retrieve some data from the server and call our saveData method to save it to disk, and retrieve some data from our saved File and do cool stuff with it:
+Code (Java):
+/*
+* Created By ForbiddenSoul
+*/
+
+package tutorial;
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.Serializable;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.UUID;
+import java.util.logging.Level;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
+
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.util.io.BukkitObjectInputStream;
+import org.bukkit.util.io.BukkitObjectOutputStream;
+
+
+public class Data implements Serializable {
+    private static transient final long serialVersionUID = -1681012206529286330L;
+ 
+    public final HashMap<Location, String> blockSnapShot;
+    public final HashSet<UUID> previouslyOnlinePlayers;
+ 
+    // Can be used for saving
+    public Data(HashMap<Location, String> blockSnapShot, HashSet<UUID> previouslyOnlinePlayers) {
+        this.blockSnapShot = blockSnapShot;
+        this.previouslyOnlinePlayers = previouslyOnlinePlayers;
+    }
+    // Can be used for loading
+    public Data(Data loadedData) {
+        this.blockSnapShot = loadedData.blockSnapShot;
+        this.previouslyOnlinePlayers = loadedData.previouslyOnlinePlayers;
+    }
+ 
+    public boolean saveData(String filePath) {
+        try {
+            BukkitObjectOutputStream out = new BukkitObjectOutputStream(new GZIPOutputStream(new FileOutputStream(filePath)));
+            out.writeObject(this);
+            out.close();
+            return true;
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            return false;
+        }
+    }
+    public static Data loadData(String filePath) {
+        try {
+            BukkitObjectInputStream in = new BukkitObjectInputStream(new GZIPInputStream(new FileInputStream(filePath)));
+            Data data = (Data) in.readObject();
+            in.close();
+            return data;
+        } catch (ClassNotFoundException | IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+            return null;
+        }
+    }
+    public static void getBlocksPlayersAndSave() {
+        // HashMap used for storing blocks
+        HashMap<Location, String> blockSnapShot = new HashMap<Location, String>();
+        // HashSet used for storing the online players
+        HashSet<UUID> previouslyOnlinePlayers = new HashSet<UUID>();
+        // Grabs the spawn location of the first world the server finds
+        Location spawnLocation = Bukkit.getServer().getWorlds().iterator().next().getSpawnLocation();    
+        // One variable to store our blockLocation
+        Location blockLocation;
+        // Variables to store our x y z coordinates
+        int x, y, z;    
+        // We will first retrieve all the currently online players
+        Bukkit.getServer().getOnlinePlayers().forEach(player -> previouslyOnlinePlayers.add(player.getUniqueId()));    
+        // Next we will retrieve all block data in a 64 by 64 radius around the spawn.
+   
+        // While looping, using the new keyword and making declarations like "int x = 0;"
+        // will create garbage, and that garbage will start to pile up if the loop is
+        // extensive. We will take as much of a load off of the garbage collector as we
+        // can here by re-assigning x,y,z not re-declaring, and re-assigning the declared
+        // blockLocation to retrieve the block data. (we are going to store 262,144 blocks...)            
+        for (x = 0; x <= 32; x++) {
+            for (y = 0; y <= 32; y++) {
+                for(z = 0; z <= 32; z++) {
+                    blockSnapShot.put(blockLocation = new Location(spawnLocation.getWorld(),
+                            spawnLocation.getX() - x,
+                            spawnLocation.getY() - y,
+                            spawnLocation.getZ() - z), blockLocation.getBlock().getBlockData().getAsString());
+                    blockSnapShot.put(blockLocation = new Location(spawnLocation.getWorld(),
+                            spawnLocation.getX() + x,
+                            spawnLocation.getY() - y,
+                            spawnLocation.getZ() - z), blockLocation.getBlock().getBlockData().getAsString());
+                    blockSnapShot.put(blockLocation = new Location(spawnLocation.getWorld(),
+                            spawnLocation.getX() - x,
+                            spawnLocation.getY() + y,
+                            spawnLocation.getZ() - z), blockLocation.getBlock().getBlockData().getAsString());
+                    blockSnapShot.put(blockLocation = new Location(spawnLocation.getWorld(),
+                            spawnLocation.getX() - x,
+                            spawnLocation.getY() - y,
+                            spawnLocation.getZ() + z), blockLocation.getBlock().getBlockData().getAsString());
+                    blockSnapShot.put(blockLocation = new Location(spawnLocation.getWorld(),
+                            spawnLocation.getX() + x,
+                            spawnLocation.getY() + y,
+                            spawnLocation.getZ() + z), blockLocation.getBlock().getBlockData().getAsString());
+                    blockSnapShot.put(blockLocation = new Location(spawnLocation.getWorld(),
+                            spawnLocation.getX() - x,
+                            spawnLocation.getY() + y,
+                            spawnLocation.getZ() + z), blockLocation.getBlock().getBlockData().getAsString());
+                    blockSnapShot.put(blockLocation = new Location(spawnLocation.getWorld(),
+                            spawnLocation.getX() + x,
+                            spawnLocation.getY() - y,
+                            spawnLocation.getZ() + z), blockLocation.getBlock().getBlockData().getAsString());
+                    blockSnapShot.put(blockLocation = new Location(spawnLocation.getWorld(),
+                            spawnLocation.getX() + x,
+                            spawnLocation.getY() + y,
+                            spawnLocation.getZ() - z), blockLocation.getBlock().getBlockData().getAsString());
+                }
+            }
+        }
+        // Finally we save the retrieved data to a file
+   
+        // You will most likely want to change the file location to your some other directory,
+        // like your plugin's data directory, instead of the Tutorial's.
+        new Data(blockSnapShot, previouslyOnlinePlayers).saveData("Tutorial.data");
+        Bukkit.getServer().getLogger().log(Level.INFO, "Data Saved");
+    }
+    public static void welcomePlayersAndResetBlocks() {
+        // Load the data from disc using our loadData method.
+        Data data = new Data(Data.loadData("Tutorial.data"));
+        // For each player that is current online send them a message
+        data.previouslyOnlinePlayers.forEach(playerId -> {
+            if (Bukkit.getServer().getPlayer(playerId).isOnline()) {
+                Bukkit.getServer().getPlayer(playerId).sendMessage("Thanks for coming back after downtime. Hope you see the spawn blocks change!");
+            }
+        });
+        // Change all of the blocks around the spawn to what we have saved in our file.
+        data.blockSnapShot.keySet().forEach(location -> location.getBlock().setBlockData(Bukkit.getServer().createBlockData(data.blockSnapShot.get(location))));
+        Bukkit.getServer().getLogger().log(Level.INFO, "Data loaded");
+    }
+}
+ 
+This example is honestly a little computationally ridiculous to be expected to run in one server tick and should really be spread out over time, but is meant as an example to show you potential.
+For this machine it takes about 10 seconds to save and load the data respectively.
+
+You now just need to pick an appropriate time and place in your code to call your getBlocksPlayersAndSave and welcomePlayersAndResetBlocks methods.
+
+I have decided to call them when /save and /load commands are issued. You can check that out in the Tutorial.jar attached here: Tutorial.jar
+
+
+Hope you have fun TNTing the heck out of your spawn, then using the data we saved to load it back.
+
+A more serious note, you do not have to store all of your data into one single container like that, you can spread the data among multiple folders (use like keys) and files (use like values) or shortcuts(use like pointers). You will have to keep track of what type of data goes where, so that you can cast the loaded object to the correct type of data.
+
+That will concludes this tutorial.
+
+Thanks for reading, and have fun coding.
+ForbiddenSoul
